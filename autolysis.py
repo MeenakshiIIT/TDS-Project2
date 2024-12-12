@@ -108,20 +108,53 @@ def analyze_data(file_path):
 
 def interact_with_aiproxy(context, task_description):
     """Interact with the AI Proxy to get insights from the LLM."""
-    # Prepare the API request payload
+    
+    # ** Step 1: Reduce context size to optimize LLM usage **
+    reduced_context = {
+        "columns": context.get("columns", [])[:10],  # Send only the first 10 columns
+        
+        # Reduce dtypes to only essential ones (first 10 columns)
+        "dtypes": {col: dtype for col, dtype in list(context.get("dtypes", {}).items())[:10]},
+        
+        # Limit summary stats to the first 5 columns
+        "summary_stats": {k: v for k, v in list(context.get("summary_stats", {}).items())[:5]},
+        
+        # Reduce missing values to the 5 most missing columns
+        "missing_values": dict(sorted(context.get("missing_values", {}).items(), key=lambda x: x[1], reverse=True)[:5]),
+        
+        # Only send details about the 5 features with the highest number of outliers
+        "outliers": dict(sorted(context.get("outliers", {}).items(), key=lambda x: x[1], reverse=True)[:5]),
+        
+        # Only keep top correlations (above a threshold) and limit to 10 pairs
+        "correlation": None  
+    }
+    
+    # If correlation exists, reduce it by filtering high correlations (> 0.7) and limiting to 10 pairs
+    if context.get("correlation") is not None:
+        correlation = context["correlation"]
+        high_corr_pairs = {}
+        for col, corr_values in correlation.items():
+            for other_col, corr_value in corr_values.items():
+                if col != other_col and abs(corr_value) > 0.7:  # Only high correlations
+                    if len(high_corr_pairs) < 10:  # Limit to 10 correlations
+                        high_corr_pairs[f"{col} & {other_col}"] = round(corr_value, 2)  # Round for clarity
+        reduced_context["correlation"] = high_corr_pairs
+    
+    # ** Step 2: Prepare the API request payload **
     payload = {
         "model": MODEL_NAME,
         "messages": [
             {"role": "system", "content": "You are an expert data analyst."},
-            {"role": "user", "content": f"{task_description}\nContext: {json.dumps(context)}"}
+            {"role": "user", "content": f"{task_description}\nContext: {json.dumps(reduced_context)}"}
         ]
     }
+    
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {get_aiproxy_token()}"
     }
 
-    # Make the API request
+    # ** Step 3: Send request to LLM and handle the response **
     try:
         response = requests.post(API_URL, json=payload, headers=headers)
         response.raise_for_status()
@@ -130,6 +163,7 @@ def interact_with_aiproxy(context, task_description):
     except requests.exceptions.RequestException as e:
         print(f"Error interacting with AI Proxy: {e}")
         return None
+
 
 def interact_with_aiproxy_with_images(context, task_description, image_paths):
     """Interact with the AI Proxy to get insights from the LLM with visual capabilities."""
