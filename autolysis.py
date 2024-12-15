@@ -1,5 +1,5 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.12"
 # dependencies = [
 #   "httpx",
 #   "pandas",
@@ -7,7 +7,10 @@
 #   "seaborn",
 #   "scikit-learn",
 #   "requests",
-#   "numpy"
+#   "numpy",
+#   "platformdirs",
+#   "python-dotenv",
+#   "rich",
 # ]
 # ///
 
