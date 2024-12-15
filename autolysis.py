@@ -322,6 +322,11 @@ def main():
     args = parser.parse_args()
 
     output_dir = os.path.splitext(args.csv_file)[0]
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of autolysis.py
+    csv_name = os.path.splitext(os.path.basename(args.csv_file))[0]  # Extract CSV filename without extension
+    output_dir = os.path.join(script_dir, csv_name)  # Create a folder named after the CSV file
+    
     os.makedirs(output_dir, exist_ok=True)
 
     # Step 1: Analyze the dataset
