@@ -25,6 +25,8 @@ import seaborn as sns
 import requests
 import json
 from sklearn.impute import SimpleImputer
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from sklearn.cluster import KMeans
 from scipy.stats import zscore
 
@@ -64,15 +66,20 @@ def analyze_data(file_path):
     dtypes = data.dtypes
     
     # Step 4: Correlation (only numeric columns)
-    correlation = None
-    numerical_data = data.select_dtypes(include=["number"])  # Only numeric columns for correlation
-    if not numerical_data.empty:
-        correlation = numerical_data.corr()
+    numerical_data = data.select_dtypes(include=["number"])
+    correlation = numerical_data.corr() if not numerical_data.empty else None
 
     # Step 5: Outlier Detection (using Z-score for numerical columns)
+    # outliers = {}
+    # z_scores = numerical_data.apply(zscore)
+    # outliers = (z_scores.abs() > 3).sum(axis=0)  # Flag values with Z-score > 3
     outliers = {}
-    z_scores = numerical_data.apply(zscore)
-    outliers = (z_scores.abs() > 3).sum(axis=0)  # Flag values with Z-score > 3
+    for col in numerical_data.columns:
+        q1 = numerical_data[col].quantile(0.25)
+        q3 = numerical_data[col].quantile(0.75)
+        iqr = q3 - q1
+        outliers[col] = numerical_data[(numerical_data[col] < q1 - 1.5 * iqr) | 
+                                       (numerical_data[col] > q3 + 1.5 * iqr)].shape[0]
 
     # Step 6: Handle missing values
     numeric_cols = data.select_dtypes(include=["number"]).columns
@@ -86,16 +93,39 @@ def analyze_data(file_path):
     imputer_non_numeric = SimpleImputer(strategy='most_frequent')
     data[non_numeric_cols] = imputer_non_numeric.fit_transform(data[non_numeric_cols])
     
+     # Ensure no NaN values remain
+    numerical_data = data.select_dtypes(include=["number"]).fillna(0)
+    
+    # Step 7: PCA for Feature Importance
+    scaler = StandardScaler()
+    numerical_scaled = scaler.fit_transform(numerical_data)
+    
+    # Determine the maximum allowable n_components
+    max_components = min(numerical_scaled.shape[0], numerical_scaled.shape[1])
+    n_components = min(5, max_components)  # Use 5 or the maximum allowable components
+
+    if n_components > 0:
+        pca = PCA(n_components=n_components, random_state=42)
+        pca.fit(numerical_scaled)
+        pca_explained = dict(zip(numerical_data.columns, pca.components_[0]))
+    else:
+        pca_explained = {}
+    
+    # pca = PCA(n_components=5, random_state=42)
+    # pca.fit(numerical_scaled)
+    # pca_explained = dict(zip(numerical_data.columns, pca.components_[0]))
+    
+    
     # Step 7: Cluster Analysis (using KMeans for numeric data)
-    cluster_info = {}
-    if not numerical_data.empty:
-        imputer_kmeans = SimpleImputer(strategy='mean')
-        numerical_data_imputed = imputer_kmeans.fit_transform(numerical_data)
+    # cluster_info = {}
+    # if not numerical_data.empty:
+    #     imputer_kmeans = SimpleImputer(strategy='mean')
+    #     numerical_data_imputed = imputer_kmeans.fit_transform(numerical_data)
         
-        # Perform KMeans clustering after imputation
-        kmeans = KMeans(n_clusters=3, random_state=42)
-        data['cluster'] = kmeans.fit_predict(numerical_data_imputed)
-        cluster_info = data['cluster'].value_counts()
+    #     # Perform KMeans clustering after imputation
+    #     kmeans = KMeans(n_clusters=3, random_state=42)
+    #     data['cluster'] = kmeans.fit_predict(numerical_data_imputed)
+    #     cluster_info = data['cluster'].value_counts()
 
     # Prepare data for LLM analysis
     context = {
@@ -103,9 +133,11 @@ def analyze_data(file_path):
         "dtypes": {col: str(dtype) for col, dtype in dtypes.items()},
         "missing_values": missing_values.to_dict(),
         "summary_stats": summary.to_dict(),
-        "outliers": outliers.to_dict(),
+        "outliers": outliers,
+        # "outliers": outliers.to_dict(),
         "correlation": correlation.to_dict() if correlation is not None else None,
-        "cluster_info": cluster_info.to_dict(),
+        #"cluster_info": cluster_info.to_dict(),
+        "pca_importance": pca_explained,
     }
     return data, context
 
@@ -260,28 +292,47 @@ def generate_visualizations(data, output_dir):
     plt.figure(figsize=(12, 10))
     numeric_data = data.select_dtypes(include=["number"])  # Only numeric columns
     correlation_matrix = numeric_data.corr()
-    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", fmt=".2f")
+    sns.heatmap(correlation_matrix, annot=True, cmap="coolwarm", fmt=".2f", cbar_kws={'label': 'Correlation Coefficient'})
     plt.title("Correlation Matrix (Numeric Features)")
     plt.savefig(os.path.join(output_dir, "correlation_matrix.png"))
     plt.close()
 
-    # Create Combined Histograms for Top 10 Features in Subplots
-    fig, axes = plt.subplots(2, 5, figsize=(20, 10))  # 2 rows, 5 columns
-    axes = axes.ravel()  # Flatten the 2D axes array for easier indexing
-
-    for i, col in enumerate(top_10_features):
-        axes[i].hist(important_data[col].dropna(), bins=20, alpha=0.7)
-        axes[i].set_title(f"Histogram of {col}")
-        axes[i].set_xlabel(col)
-        axes[i].set_ylabel('Frequency')
-
-    # Hide the last subplot if there are less than 10 features
-    for j in range(i + 1, 10):
-        axes[j].axis('off')
-
+# Combined Boxplot for Top 10 Features
+    plt.figure(figsize=(16, 8))  # Adjust size to fit all features
+    sns.boxplot(data=important_data[top_10_features], palette="Set2")
+    plt.title("Boxplots of Top 10 Important Features")
+    plt.xticks(rotation=45)  # Rotate feature names for better visibility
+    plt.ylabel("Value")
+    plt.xlabel("Features")
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "top_10_features_histogram.png"))
+    plt.savefig(os.path.join(output_dir, "boxplots_top_10_features.png"))
     plt.close()
+    # # Boxplots for Top 10 Features
+    # for col in top_10_features:
+    #     plt.figure(figsize=(8, 6))
+    #     sns.boxplot(data=important_data[col], palette="Set2")
+    #     plt.title(f"Boxplot of {col}")
+    #     plt.ylabel("Value")
+    #     plt.savefig(os.path.join(output_dir, f"boxplot_{col}.png"))
+    #     plt.close()
+
+    # Create Combined Histograms for Top 10 Features in Subplots
+    # fig, axes = plt.subplots(2, 5, figsize=(20, 10))  # 2 rows, 5 columns
+    # axes = axes.ravel()  # Flatten the 2D axes array for easier indexing
+
+    # for i, col in enumerate(top_10_features):
+    #     axes[i].boxplot(important_data[col].dropna(), bins=20, alpha=0.7)
+    #     axes[i].set_title(f"Histogram of {col}")
+    #     axes[i].set_xlabel(col)
+    #     axes[i].set_ylabel('Frequency')
+
+    # # Hide the last subplot if there are less than 10 features
+    # for j in range(i + 1, 10):
+    #     axes[j].axis('off')
+
+    # plt.tight_layout()
+    # plt.savefig(os.path.join(output_dir, "top_10_features_histogram.png"))
+    # plt.close()
 
 # # Compress the image
 #     compress_image(temp_image_path, compressed_image_path)
@@ -297,10 +348,21 @@ def write_markdown_report(output_dir, analysis_summary, visualizations):
     """Write a markdown report summarizing the analysis."""
     with open(os.path.join(output_dir, "README.md"), "w") as f:
         f.write("# Automated Data Analysis Report\n\n")
-        f.write(analysis_summary)
-        f.write("\n\n## Visualizations\n")
+        f.write("## Summary\n")
+        f.write("This report contains the findings from the analysis of the dataset.\n\n")
+        f.write("### Key Insights\n")
+        f.write(f"{analysis_summary}\n\n")
+        f.write("## Visualizations\n\n")
         for viz in visualizations:
             f.write(f"![{viz}]({viz})\n")
+        f.write("\n\n**Note**: The visualizations provide an in-depth understanding of relationships and trends in the data.")
+        
+               
+        # f.write("# Automated Data Analysis Report\n\n")
+        # f.write(analysis_summary)
+        # f.write("\n\n## Visualizations\n")
+        # for viz in visualizations:
+        #     f.write(f"![{viz}]({viz})\n")
 
 def agentic_workflow(context, initial_task, output_dir):
     """Agentic workflow where the LLM decides the next step."""
@@ -309,12 +371,21 @@ def agentic_workflow(context, initial_task, output_dir):
        # print(f"🔍 Task {step + 1}: {current_task}")
         result = interact_with_aiproxy(context, current_task)
         
-        if "generate visualization" in result.lower():
+        if "visualize" in result.lower():
             generate_visualizations(context, output_dir)
-        elif "stop" in result.lower() or "complete" in result.lower():
-            break  
+        elif "explore further" in result.lower():
+            context["exploration"] = "additional statistical techniques applied."
+        elif "stop" in result.lower():
+            break
         else:
-            current_task = result  
+            current_task = result
+        
+        # if "generate visualization" in result.lower():
+        #     generate_visualizations(context, output_dir)
+        # elif "stop" in result.lower() or "complete" in result.lower():
+        #     break  
+        # else:
+        #     current_task = result  
 
 def main():
     parser = argparse.ArgumentParser(description="Automated data analysis with AI Proxy support.")
