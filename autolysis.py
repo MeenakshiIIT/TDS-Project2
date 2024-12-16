@@ -321,11 +321,17 @@ def main():
     parser.add_argument("csv_file", help="Path to the CSV dataset")
     args = parser.parse_args()
 
-    output_dir = os.path.splitext(args.csv_file)[0]
+    # output_dir = os.path.splitext(args.csv_file)[0]
     
-    script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of autolysis.py
-    csv_name = os.path.splitext(os.path.basename(args.csv_file))[0]  # Extract CSV filename without extension
-    output_dir = os.path.join(script_dir, csv_name)  # Create a folder named after the CSV file
+    # script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the directory of autolysis.py
+    # csv_name = os.path.splitext(os.path.basename(args.csv_file))[0]  # Extract CSV filename without extension
+    # output_dir = os.path.join(script_dir, csv_name)  # Create a folder named after the CSV file
+    
+    current_dir = os.getcwd()  # Get current working directory where script is run
+    csv_name = os.path.basename(args.csv_file)  # Keep the full name, e.g., "goodreads.csv"
+        
+    # Create the output directory in the current folder with the CSV name
+    output_dir = os.path.join(current_dir, csv_name)
     
     os.makedirs(output_dir, exist_ok=True)
 
